@@ -76,8 +76,8 @@ Public SearXNG instances can be unavailable or rate-limited. Configure several i
 - Optional SerpApi key
 
 ```bash
-git clone https://github.com/AmmarBinYasir489/ai-research-assistnat.git
-cd ai-research-assistnat
+git clone https://github.com/AmmarBinYasir489/ai-research-assistant.git
+cd ai-research-assistant
 
 python -m venv .venv
 ```
