@@ -100,25 +100,26 @@ You are planning a research task.
 Choose the best research mode, query, freshness rule, and source count.
 
 Rules:
-- research_mode must be one of: "news", "web", "hybrid".
-- search_tools can include: "google_news", "searxng", "serpapi".
-- For "latest", "today", "this week", or news questions, use a small max_age_days.
-- For patents, named inventors, patent numbers, assignees, historical facts, or old technical records, use research_mode "web" and set requires_freshness to false.
-- Old sources can still be valid evidence when the user asks for a specific patent, document, person, or record.
-- For broad trend questions, inspect more articles.
-- For "latest trends", "current landscape", or questions needing both recency and background, use research_mode "hybrid".
+- research_mode must be one of: "web", "hybrid", "news".
+- search_tools can include: "searxng", "google_news", "serpapi".
+- "web" is the general default and works for most questions, including historical and reference ones.
+- "news" is only for questions explicitly about very recent events or announcements ("today", "this week", "latest news").
+- "hybrid" combines news and web when the question needs both recent developments and background.
+- requires_freshness should be false unless the user is specifically asking about current or recent events.
+- Older sources are valid evidence for historical, reference, and background questions.
+- Even when recent sources are preferred, older sources can still be used if recent coverage is thin.
 - final_source_count must be smaller than or equal to search_result_count.
 - Return JSON only.
 
 Schema:
 {{
   "research_mode": "hybrid",
-  "search_tools": ["google_news", "searxng"],
+  "search_tools": ["searxng", "google_news"],
   "search_query": "...",
   "search_result_count": 15,
   "final_source_count": 5,
   "max_age_days": 30,
-  "requires_freshness": true,
+  "requires_freshness": false,
   "reason": "..."
 }}
 
@@ -134,7 +135,7 @@ User question:
             "search_result_count": SEARCH_RESULT_COUNT,
             "final_source_count": FINAL_SOURCE_COUNT,
             "max_age_days": MAX_ARTICLE_AGE_DAYS,
-            "requires_freshness": "yes",
+            "requires_freshness": "no",
             "reason": "Fallback plan because the LLM did not return JSON.",
         }
 
@@ -152,7 +153,7 @@ User question:
     search_result_count = parsed.get("search_result_count", SEARCH_RESULT_COUNT)
     final_source_count = parsed.get("final_source_count", FINAL_SOURCE_COUNT)
     max_age_days = parsed.get("max_age_days", MAX_ARTICLE_AGE_DAYS)
-    requires_freshness = parsed.get("requires_freshness", True)
+    requires_freshness = parsed.get("requires_freshness", False)
     reason = parsed.get("reason", "Model-created research plan.")
 
     if not isinstance(research_mode, str):
@@ -175,7 +176,7 @@ User question:
     if not isinstance(max_age_days, int):
         max_age_days = MAX_ARTICLE_AGE_DAYS
     if not isinstance(requires_freshness, bool):
-        requires_freshness = research_mode == "news"
+        requires_freshness = False
     if not isinstance(reason, str):
         reason = "Model-created research plan."
 
@@ -255,11 +256,7 @@ def select_latest_results(
 
     for result in results:
         published_date = parse_result_date(result)
-        if not published_date:
-            rejected_results.append(result)
-            continue
-
-        if published_date < cutoff:
+        if published_date and published_date < cutoff:
             rejected_results.append(result)
             continue
 
@@ -312,7 +309,7 @@ Search results:
     source_links = format_source_links(results, final_source_count)
     trace_text = format_research_trace(trace or [])
     response, error = ask_llm(prompt, max_tokens=450)
-    if response:
+    if response and response.strip():
         parts = [response.strip()]
         if trace_text:
             parts.append(trace_text)
@@ -369,6 +366,15 @@ def search_web(query: str, search_result_count: int, search_tools: list[str]) ->
             result["search_tool"] = tool
         results.extend(tool_results)
 
+    if not results and "searxng" not in search_tools:
+        try:
+            fallback_results = search_with_tool("searxng", query, per_tool_count)
+            for result in fallback_results:
+                result["search_tool"] = "searxng"
+            results.extend(fallback_results)
+        except (SearxngSearchError, requests.RequestException) as error:
+            errors.append(f"searxng: {error}")
+
     results = deduplicate_results(results)
     if results:
         return results[:search_result_count]
@@ -385,7 +391,13 @@ def process_results(
     final_source_count: int,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     if requires_freshness:
-        selected_results, rejected_results = select_latest_results(results, max_age_days)
+        recent_results, older_results = select_latest_results(results, max_age_days)
+        if len(recent_results) < min(final_source_count, len(results)):
+            selected_results = recent_results + older_results
+            rejected_results = []
+        else:
+            selected_results = recent_results
+            rejected_results = older_results
     else:
         selected_results, rejected_results = select_results_without_freshness_filter(results)
 
@@ -505,6 +517,22 @@ def run_research(
 
         search_query = next_query.strip()
         report("retry", "Refining the search query for more specific results...")
+
+    if not all_results:
+        return ResearchResult(
+            question=user_question,
+            plan=plan,
+            answer="I could not find any relevant sources to answer this question.",
+            evaluation={
+                "enough_information": False,
+                "confidence": "low",
+                "reason": "No sources were found.",
+                "missing_information": [],
+                "conflicts": [],
+                "recommended_next_query": None,
+            },
+            trace=trace,
+        )
 
     final_sources = format_sources(all_results, final_source_count)
     report("evaluate", "Running a final evidence check...")

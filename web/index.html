@@ -66,7 +66,7 @@
       <textarea
         id="question"
         rows="3"
-        class="w-full resize-none border-0 bg-transparent px-3 pt-2 text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+        class="w-full resize-none border-0 bg-transparent px-3 pt-2 text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-70"
         placeholder="e.g. What are the latest developments in solid-state EV batteries?"
       ></textarea>
       <div class="flex items-center justify-between gap-2 px-2 pb-1.5 pt-1">
@@ -87,13 +87,13 @@
     <!-- example chips -->
     <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
       <span class="text-xs text-slate-400">Try:</span>
-      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-50">
         Latest in solid-state batteries
       </button>
-      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-50">
         What changed in AI regulation this week?
       </button>
-      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-50">
         Most recent ocean clean-up breakthroughs
       </button>
     </div>
@@ -135,10 +135,6 @@
         <div id="sourceGrid" class="grid gap-3 sm:grid-cols-2"></div>
       </div>
 
-      <details class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <summary class="cursor-pointer select-none text-sm font-semibold text-slate-900">Research details</summary>
-        <div id="planDetails" class="mt-3 flex flex-wrap gap-2"></div>
-      </details>
     </section>
 
     <!-- error -->
@@ -161,7 +157,6 @@
     const answerEl = document.getElementById('answer');
     const sourceGrid = document.getElementById('sourceGrid');
     const sourceCount = document.getElementById('sourceCount');
-    const planDetails = document.getElementById('planDetails');
     const errorPanel = document.getElementById('errorPanel');
     const providerBadges = document.getElementById('providerBadges');
 
@@ -204,23 +199,13 @@
     function renderAnswer(answer) {
       const sections = String(answer || '').split(/^###\s+/m);
       let body = '';
-      let attempts = null;
       for (const sec of sections) {
         if (!sec.trim()) continue;
         const header = sec.split('\n')[0].trim();
-        if (header === 'Evidence Check' || header === 'Sources Checked') continue;
-        if (header === 'Research Attempts') {
-          attempts = sec.split('\n').slice(1).filter(l => l.trim()).join(' ');
-          continue;
-        }
+        if (header === 'Evidence Check' || header === 'Sources Checked' || header === 'Research Attempts') continue;
         body += renderBody(sec);
       }
       answerEl.innerHTML = body || '<p>No answer returned.</p>';
-      if (attempts) {
-        answerEl.insertAdjacentHTML('beforeend',
-          '<p class="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">' +
-          esc('Research attempts: ' + attempts.replace(/^- /gm, '')).replace(/\n/g, ' · ') + '</p>');
-      }
     }
 
     const spinner = '<svg class="h-5 w-5 animate-spin text-indigo-500" viewBox="0 0 24 24" fill="none"><circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path></svg>';
@@ -264,39 +249,21 @@
         '</div>';
 
       if (ev.reason) html += '<p class="mt-3 text-sm leading-relaxed text-slate-600">' + esc(ev.reason) + '</p>';
-
-      if (Array.isArray(ev.missing_information) && ev.missing_information.length) {
-        html += '<p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Still missing</p><ul class="mt-1 space-y-1 text-sm text-slate-600">';
-        ev.missing_information.forEach(m => { html += '<li class="flex gap-2"><span class="text-slate-300">&middot;</span><span>' + esc(m) + '</span></li>'; });
-        html += '</ul>';
-      }
-      if (Array.isArray(ev.conflicts) && ev.conflicts.length) {
-        html += '<p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Conflicting reports</p><ul class="mt-1 space-y-1 text-sm text-slate-600">';
-        ev.conflicts.forEach(c => { html += '<li class="flex gap-2"><span class="text-slate-300">&middot;</span><span>' + esc(c) + '</span></li>'; });
-        html += '</ul>';
-      }
       evidenceCard.innerHTML = html;
     }
 
-    function sourceCard(s, i) {
+    function sourceCard(s) {
       let host = '';
       try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) { host = s.url; }
       const date = (s.published_at || s.published || '').slice(0, 10);
       const initials = (s.title || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
-      const score = s.relevance_score ? Number(s.relevance_score).toFixed(0) : null;
 
       return (
-        '<a href="' + esc(s.url) + '" target="_blank" rel="noopener" class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 transition hover:border-indigo-200 hover:shadow-md hover:shadow-slate-100">' +
-          '<div class="flex items-start gap-3">' +
-            '<div class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 text-xs font-bold text-slate-500">' + esc(initials) + '</div>' +
-            '<div class="min-w-0">' +
-              '<p class="line-clamp-2 text-sm font-medium text-slate-900 group-hover:text-indigo-600">' + esc(s.title || 'Untitled') + '</p>' +
-              '<p class="mt-0.5 text-xs text-slate-400">' + esc(host) + (date ? ' &middot; ' + esc(date) : '') + '</p>' +
-            '</div>' +
-          '</div>' +
-          '<div class="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">' +
-            '<span class="text-xs font-medium text-slate-500">Source ' + (i + 1) + '</span>' +
-            (score ? '<span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">Relevance ' + esc(score) + '</span>' : '') +
+        '<a href="' + esc(s.url) + '" target="_blank" rel="noopener" class="group flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-indigo-200 hover:shadow-md hover:shadow-slate-100">' +
+          '<div class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 text-xs font-bold text-slate-500">' + esc(initials) + '</div>' +
+          '<div class="min-w-0 flex-1">' +
+            '<p class="line-clamp-2 text-sm font-medium text-slate-900 group-hover:text-indigo-600">' + esc(s.title || 'Untitled') + '</p>' +
+            '<p class="mt-0.5 text-xs text-slate-400">' + esc(host) + (date ? ' &middot; ' + esc(date) : '') + '</p>' +
           '</div>' +
         '</a>'
       );
@@ -312,22 +279,6 @@
       if (!sources.length) {
         sourceGrid.innerHTML = '<p class="col-span-2 text-sm text-slate-400">No sources were returned for this question.</p>';
       }
-
-      const p = data.plan || {};
-      const chips = [
-        ['Mode', p.research_mode || '—'],
-        ['Tools', (p.search_tools || []).join(', ')],
-        ['Inspected', p.search_result_count],
-        ['Kept', p.final_source_count],
-        ['Freshness', p.requires_freshness === 'yes' ? 'Recent (' + p.max_age_days + ' days)' : 'Any date'],
-      ];
-      planDetails.innerHTML = chips
-        .map(([k, v]) => '<span class="rounded-lg bg-slate-50 px-2.5 py-1 text-xs text-slate-600"><span class="font-medium text-slate-400">' + esc(k) + ': </span>' + esc(v) + '</span>')
-        .join('');
-      if (p.reason) {
-        planDetails.insertAdjacentHTML('beforeend',
-          '<span class="w-full text-xs leading-relaxed text-slate-500">Why: ' + esc(p.reason) + '</span>');
-      }
     }
 
     function showError(message) {
@@ -336,11 +287,17 @@
       progressPanel.hidden = true;
     }
 
+    function setRunning(running) {
+      runBtn.disabled = running;
+      questionEl.disabled = running;
+      document.querySelectorAll('.example').forEach(b => { b.disabled = running; });
+    }
+
     async function start() {
       const question = questionEl.value.trim();
       if (!question || runBtn.disabled) return;
 
-      runBtn.disabled = true;
+      setRunning(true);
       errorPanel.hidden = true;
       resultsEl.hidden = true;
       progressPanel.hidden = false;
@@ -356,14 +313,14 @@
           body: JSON.stringify({ question }),
         });
       } catch (err) {
-        runBtn.disabled = false;
+        setRunning(false);
         showError('Could not reach the server. Is it running? (' + err.message + ')');
         return;
       }
       if (!res.ok) {
         let detail = res.statusText;
         try { detail = (await res.json()).detail || detail; } catch (e) {}
-        runBtn.disabled = false;
+        setRunning(false);
         showError('Request failed: ' + detail);
         return;
       }
@@ -378,7 +335,7 @@
         res = await fetch('/api/research/' + jobId);
       } catch (err) {
         clearInterval(pollTimer);
-        runBtn.disabled = false;
+        setRunning(false);
         showError('Lost connection to the server.');
         return;
       }
@@ -391,14 +348,14 @@
 
       if (data.status === 'done') {
         clearInterval(pollTimer);
-        runBtn.disabled = false;
+        setRunning(false);
         progressPanel.hidden = true;
         resultsEl.hidden = false;
         renderResults(data.result || {});
         window.scrollTo({ top: resultsEl.offsetTop - 72, behavior: 'smooth' });
       } else if (data.status === 'error') {
         clearInterval(pollTimer);
-        runBtn.disabled = false;
+        setRunning(false);
         showError(data.error || 'Something went wrong while researching.');
       }
     }
