@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Research Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    .answer-prose p { margin: 0.5rem 0; }
+    .answer-prose ul, .answer-prose ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+    .answer-prose li { margin: 0.25rem 0; }
+    .answer-prose strong { font-weight: 600; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 font-sans text-slate-800 antialiased">
+
+  <!-- background decoration -->
+  <div class="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
+    <div class="absolute -top-32 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-indigo-200/30 blur-3xl"></div>
+    <div class="absolute right-[-8rem] top-64 h-72 w-72 rounded-full bg-violet-200/30 blur-3xl"></div>
+  </div>
+
+  <!-- nav -->
+  <nav class="sticky top-0 z-40 border-b border-slate-200/70 bg-white/80 backdrop-blur">
+    <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
+      <div class="flex items-center gap-2.5">
+        <div class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-sm shadow-indigo-200">
+          <svg class="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-semibold leading-tight text-slate-900">Research Assistant</p>
+          <p class="text-xs leading-tight text-slate-500">Evidence-checked web summaries</p>
+        </div>
+      </div>
+      <div id="providerBadges" class="hidden items-center gap-2"></div>
+    </div>
+  </nav>
+
+  <main class="relative z-10 mx-auto max-w-3xl px-4 pb-24 sm:px-6">
+
+    <!-- hero -->
+    <header class="pt-12 pb-7 text-center sm:pt-16">
+      <h1 class="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Ask the web a question.</h1>
+      <p class="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-slate-500">
+        Get a clear, evidence-checked summary with cited sources pulled from news and the open web.
+      </p>
+    </header>
+
+    <!-- input card -->
+    <div class="rounded-2xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/50 transition focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-100">
+      <textarea
+        id="question"
+        rows="3"
+        class="w-full resize-none border-0 bg-transparent px-3 pt-2 text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+        placeholder="e.g. What are the latest developments in solid-state EV batteries?"
+      ></textarea>
+      <div class="flex items-center justify-between gap-2 px-2 pb-1.5 pt-1">
+        <p class="hidden text-xs text-slate-400 sm:block">Enter to run &middot; Shift+Enter for a new line</p>
+        <button
+          id="runBtn"
+          class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-violet-500 active:scale-[.98] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m21 21-4.35-4.35"></path>
+          </svg>
+          Research
+        </button>
+      </div>
+    </div>
+
+    <!-- example chips -->
+    <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+      <span class="text-xs text-slate-400">Try:</span>
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+        Latest in solid-state batteries
+      </button>
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+        What changed in AI regulation this week?
+      </button>
+      <button class="example rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-300 hover:text-indigo-600">
+        Most recent ocean clean-up breakthroughs
+      </button>
+    </div>
+
+    <!-- progress panel -->
+    <section id="progressPanel" class="mt-10" hidden>
+      <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="h-1 bg-slate-100">
+          <div id="progressBar" class="h-full w-0 bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-700"></div>
+        </div>
+        <div class="p-5 sm:p-6">
+          <div class="flex items-center gap-2.5">
+            <span class="h-2.5 w-2.5 flex-none rounded-full bg-indigo-500 animate-pulse"></span>
+            <h2 class="text-sm font-semibold text-slate-900">Working on it</h2>
+            <span id="progressStatus" class="truncate text-sm text-slate-500"></span>
+          </div>
+          <ol id="progressList" class="mt-4 space-y-3"></ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- results -->
+    <section id="results" class="mt-10 space-y-6" hidden>
+      <div id="evidenceCard" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"></div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div class="mb-1 flex items-baseline justify-between border-b border-slate-100 pb-3">
+          <h2 class="text-sm font-semibold text-slate-900">Answer</h2>
+          <span class="text-xs text-slate-400">key findings cite sources below</span>
+        </div>
+        <div id="answer" class="answer-prose mt-3 text-[15px] leading-relaxed text-slate-700"></div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div class="mb-4 flex items-baseline justify-between">
+          <h2 class="text-sm font-semibold text-slate-900">Sources</h2>
+          <span id="sourceCount" class="text-xs text-slate-400"></span>
+        </div>
+        <div id="sourceGrid" class="grid gap-3 sm:grid-cols-2"></div>
+      </div>
+
+      <details class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <summary class="cursor-pointer select-none text-sm font-semibold text-slate-900">Research details</summary>
+        <div id="planDetails" class="mt-3 flex flex-wrap gap-2"></div>
+      </details>
+    </section>
+
+    <!-- error -->
+    <section id="errorPanel" class="mt-10 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700" hidden></section>
+  </main>
+
+  <footer class="relative z-10 border-t border-slate-200/70 bg-white/60 py-6 text-center text-xs text-slate-400">
+    Research Assistant &middot; sources are retrieved live, answers are AI-generated and may contain errors
+  </footer>
+
+  <script>
+    const questionEl = document.getElementById('question');
+    const runBtn = document.getElementById('runBtn');
+    const progressPanel = document.getElementById('progressPanel');
+    const progressBar = document.getElementById('progressBar');
+    const progressStatus = document.getElementById('progressStatus');
+    const progressList = document.getElementById('progressList');
+    const resultsEl = document.getElementById('results');
+    const evidenceCard = document.getElementById('evidenceCard');
+    const answerEl = document.getElementById('answer');
+    const sourceGrid = document.getElementById('sourceGrid');
+    const sourceCount = document.getElementById('sourceCount');
+    const planDetails = document.getElementById('planDetails');
+    const errorPanel = document.getElementById('errorPanel');
+    const providerBadges = document.getElementById('providerBadges');
+
+    let pollTimer = null;
+
+    function esc(s) {
+      const div = document.createElement('div');
+      div.textContent = s == null ? '' : String(s);
+      return div.innerHTML;
+    }
+
+    function inline(s) {
+      return esc(s)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+          '<a href="$2" target="_blank" rel="noopener" class="text-indigo-600 underline decoration-indigo-200 hover:decoration-indigo-500">$1</a>');
+    }
+
+    function renderBody(text) {
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      const out = [];
+      let list = null;
+      for (const line of lines) {
+        if (/^- /.test(line)) {
+          if (list !== 'ul') { if (list) out.push('</ol>'); out.push('<ul class="list-disc">'); list = 'ul'; }
+          out.push('<li>' + inline(line.replace(/^- /, '')) + '</li>');
+        } else if (/^\d+\. /.test(line)) {
+          if (list !== 'ol') { if (list) out.push('</ul>'); out.push('<ol class="list-decimal">'); list = 'ol'; }
+          out.push('<li>' + inline(line.replace(/^\d+\. /, '')) + '</li>');
+        } else {
+          if (list) { out.push(list === 'ul' ? '</ul>' : '</ol>'); list = null; }
+          out.push('<p>' + inline(line) + '</p>');
+        }
+      }
+      if (list) out.push(list === 'ul' ? '</ul>' : '</ol>');
+      return out.join('');
+    }
+
+    function renderAnswer(answer) {
+      const sections = String(answer || '').split(/^###\s+/m);
+      let body = '';
+      let attempts = null;
+      for (const sec of sections) {
+        if (!sec.trim()) continue;
+        const header = sec.split('\n')[0].trim();
+        if (header === 'Evidence Check' || header === 'Sources Checked') continue;
+        if (header === 'Research Attempts') {
+          attempts = sec.split('\n').slice(1).filter(l => l.trim()).join(' ');
+          continue;
+        }
+        body += renderBody(sec);
+      }
+      answerEl.innerHTML = body || '<p>No answer returned.</p>';
+      if (attempts) {
+        answerEl.insertAdjacentHTML('beforeend',
+          '<p class="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">' +
+          esc('Research attempts: ' + attempts.replace(/^- /gm, '')).replace(/\n/g, ' · ') + '</p>');
+      }
+    }
+
+    const spinner = '<svg class="h-5 w-5 animate-spin text-indigo-500" viewBox="0 0 24 24" fill="none"><circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"></path></svg>';
+    const check = '<svg class="h-5 w-5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path></svg>';
+
+    function renderProgress(items, status) {
+      progressList.innerHTML = '';
+      items.forEach((item, i) => {
+        const isLast = i === items.length - 1 && status === 'running';
+        const li = document.createElement('li');
+        li.className = 'flex items-start gap-3';
+        li.innerHTML =
+          '<span class="mt-0.5 grid h-5 w-5 flex-none place-items-center">' + (isLast ? spinner : check) + '</span>' +
+          '<p class="text-sm text-slate-600">' + esc(item.message) + '</p>';
+        progressList.appendChild(li);
+      });
+      const width = status === 'running' ? Math.min(92, 24 + items.length * 16) : 100;
+      progressBar.style.width = width + '%';
+    }
+
+    function renderEvidence(ev) {
+      const conf = ['high', 'medium', 'low'].includes(ev.confidence) ? ev.confidence : 'low';
+      const meta = {
+        high:   { label: 'High',      cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+        medium: { label: 'Medium',    cls: 'bg-amber-50 text-amber-700 ring-amber-200' },
+        low:    { label: 'Low',       cls: 'bg-rose-50 text-rose-700 ring-rose-200' },
+      }[conf];
+      const enough = ev.enough_information;
+
+      let html =
+        '<div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">' +
+          '<div class="flex items-center gap-2">' +
+            '<h2 class="text-sm font-semibold text-slate-900">Evidence check</h2>' +
+            '<span class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ' + meta.cls + '">' + meta.label + ' confidence</span>' +
+          '</div>' +
+          '<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ' +
+            (enough ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-slate-100 text-slate-600 ring-slate-200') + '">' +
+            '<span class="h-1.5 w-1.5 rounded-full ' + (enough ? 'bg-emerald-500' : 'bg-slate-400') + '"></span>' +
+            (enough ? 'Enough information to answer' : 'Sources may be incomplete') +
+          '</span>' +
+        '</div>';
+
+      if (ev.reason) html += '<p class="mt-3 text-sm leading-relaxed text-slate-600">' + esc(ev.reason) + '</p>';
+
+      if (Array.isArray(ev.missing_information) && ev.missing_information.length) {
+        html += '<p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Still missing</p><ul class="mt-1 space-y-1 text-sm text-slate-600">';
+        ev.missing_information.forEach(m => { html += '<li class="flex gap-2"><span class="text-slate-300">&middot;</span><span>' + esc(m) + '</span></li>'; });
+        html += '</ul>';
+      }
+      if (Array.isArray(ev.conflicts) && ev.conflicts.length) {
+        html += '<p class="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Conflicting reports</p><ul class="mt-1 space-y-1 text-sm text-slate-600">';
+        ev.conflicts.forEach(c => { html += '<li class="flex gap-2"><span class="text-slate-300">&middot;</span><span>' + esc(c) + '</span></li>'; });
+        html += '</ul>';
+      }
+      evidenceCard.innerHTML = html;
+    }
+
+    function sourceCard(s, i) {
+      let host = '';
+      try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch (e) { host = s.url; }
+      const date = (s.published_at || s.published || '').slice(0, 10);
+      const initials = (s.title || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+      const score = s.relevance_score ? Number(s.relevance_score).toFixed(0) : null;
+
+      return (
+        '<a href="' + esc(s.url) + '" target="_blank" rel="noopener" class="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 transition hover:border-indigo-200 hover:shadow-md hover:shadow-slate-100">' +
+          '<div class="flex items-start gap-3">' +
+            '<div class="grid h-9 w-9 flex-none place-items-center rounded-lg bg-gradient-to-br from-slate-100 to-slate-200 text-xs font-bold text-slate-500">' + esc(initials) + '</div>' +
+            '<div class="min-w-0">' +
+              '<p class="line-clamp-2 text-sm font-medium text-slate-900 group-hover:text-indigo-600">' + esc(s.title || 'Untitled') + '</p>' +
+              '<p class="mt-0.5 text-xs text-slate-400">' + esc(host) + (date ? ' &middot; ' + esc(date) : '') + '</p>' +
+            '</div>' +
+          '</div>' +
+          '<div class="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">' +
+            '<span class="text-xs font-medium text-slate-500">Source ' + (i + 1) + '</span>' +
+            (score ? '<span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">Relevance ' + esc(score) + '</span>' : '') +
+          '</div>' +
+        '</a>'
+      );
+    }
+
+    function renderResults(data) {
+      renderEvidence(data.evidence || {});
+      renderAnswer(data.answer);
+
+      const sources = data.sources || [];
+      sourceCount.textContent = sources.length + (sources.length === 1 ? ' source' : ' sources');
+      sourceGrid.innerHTML = sources.map(sourceCard).join('');
+      if (!sources.length) {
+        sourceGrid.innerHTML = '<p class="col-span-2 text-sm text-slate-400">No sources were returned for this question.</p>';
+      }
+
+      const p = data.plan || {};
+      const chips = [
+        ['Mode', p.research_mode || '—'],
+        ['Tools', (p.search_tools || []).join(', ')],
+        ['Inspected', p.search_result_count],
+        ['Kept', p.final_source_count],
+        ['Freshness', p.requires_freshness === 'yes' ? 'Recent (' + p.max_age_days + ' days)' : 'Any date'],
+      ];
+      planDetails.innerHTML = chips
+        .map(([k, v]) => '<span class="rounded-lg bg-slate-50 px-2.5 py-1 text-xs text-slate-600"><span class="font-medium text-slate-400">' + esc(k) + ': </span>' + esc(v) + '</span>')
+        .join('');
+      if (p.reason) {
+        planDetails.insertAdjacentHTML('beforeend',
+          '<span class="w-full text-xs leading-relaxed text-slate-500">Why: ' + esc(p.reason) + '</span>');
+      }
+    }
+
+    function showError(message) {
+      errorPanel.textContent = message;
+      errorPanel.hidden = false;
+      progressPanel.hidden = true;
+    }
+
+    async function start() {
+      const question = questionEl.value.trim();
+      if (!question || runBtn.disabled) return;
+
+      runBtn.disabled = true;
+      errorPanel.hidden = true;
+      resultsEl.hidden = true;
+      progressPanel.hidden = false;
+      progressBar.style.width = '8%';
+      progressList.innerHTML = '<li class="flex items-start gap-3"><span class="mt-0.5 grid h-5 w-5 flex-none place-items-center">' + spinner + '</span><p class="text-sm text-slate-600">Starting up...</p></li>';
+      progressStatus.textContent = '';
+
+      let res;
+      try {
+        res = await fetch('/api/research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question }),
+        });
+      } catch (err) {
+        runBtn.disabled = false;
+        showError('Could not reach the server. Is it running? (' + err.message + ')');
+        return;
+      }
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { detail = (await res.json()).detail || detail; } catch (e) {}
+        runBtn.disabled = false;
+        showError('Request failed: ' + detail);
+        return;
+      }
+
+      const { job_id } = await res.json();
+      pollTimer = setInterval(() => poll(job_id), 700);
+    }
+
+    async function poll(jobId) {
+      let res;
+      try {
+        res = await fetch('/api/research/' + jobId);
+      } catch (err) {
+        clearInterval(pollTimer);
+        runBtn.disabled = false;
+        showError('Lost connection to the server.');
+        return;
+      }
+      const data = await res.json();
+
+      if (data.progress && data.progress.length) {
+        progressStatus.textContent = data.progress[data.progress.length - 1].message;
+      }
+      renderProgress(data.progress || [], data.status);
+
+      if (data.status === 'done') {
+        clearInterval(pollTimer);
+        runBtn.disabled = false;
+        progressPanel.hidden = true;
+        resultsEl.hidden = false;
+        renderResults(data.result || {});
+        window.scrollTo({ top: resultsEl.offsetTop - 72, behavior: 'smooth' });
+      } else if (data.status === 'error') {
+        clearInterval(pollTimer);
+        runBtn.disabled = false;
+        showError(data.error || 'Something went wrong while researching.');
+      }
+    }
+
+    async function loadProviders() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        const badges = (data.llm_providers || []).map(p =>
+          '<span class="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium ' +
+          (p.available ? 'text-slate-700' : 'text-slate-400') + '">' +
+            '<span class="h-1.5 w-1.5 rounded-full ' + (p.available ? 'bg-emerald-500' : 'bg-slate-300') + '"></span>' +
+            esc(p.name) + ' &middot; ' + esc(p.model) +
+          '</span>'
+        );
+        if (badges.length) {
+          providerBadges.innerHTML = badges.join('');
+          providerBadges.classList.remove('hidden');
+          providerBadges.classList.add('flex');
+        }
+      } catch (e) {}
+    }
+
+    runBtn.addEventListener('click', start);
+    questionEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        start();
+      }
+    });
+    document.querySelectorAll('.example').forEach(btn => {
+      btn.addEventListener('click', () => {
+        questionEl.value = btn.textContent.trim();
+        start();
+      });
+    });
+
+    loadProviders();
+  </script>
+</body>
+</html>

@@ -1,5 +1,7 @@
 import json
 import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -10,6 +12,8 @@ from tools.article_reader import enrich_with_article_text
 from tools.evidence_evaluator import evaluate_evidence, format_evaluation_summary
 from tools.google_news import GoogleNewsError, google_news_search
 from tools.google_search import SearchError, google_search
+from tools.llm import ask_llm
+from tools.relevance_ranker import rank_results_with_llm
 from tools.result_ranker import rank_results
 from tools.searxng_search import SearxngSearchError, searxng_search
 
@@ -25,6 +29,17 @@ MAX_ALLOWED_SEARCH_RESULTS = 20
 MAX_ALLOWED_FINAL_SOURCES = 8
 MAX_ALLOWED_ARTICLE_AGE_DAYS = 365
 MAX_ALLOWED_RESEARCH_ATTEMPTS = 3
+
+
+@dataclass
+class ResearchResult:
+    question: str
+    plan: dict[str, object] = field(default_factory=dict)
+    answer: str = ""
+    evaluation: dict[str, object] = field(default_factory=dict)
+    sources: list[dict[str, str]] = field(default_factory=list)
+    rejected: list[dict[str, str]] = field(default_factory=list)
+    trace: list[dict[str, str]] = field(default_factory=list)
 
 
 def clamp(value: int, minimum: int, maximum: int) -> int:
@@ -50,33 +65,6 @@ def normalize_search_tools(research_mode: str, search_tools: list[str]) -> list[
     return ordered_tools
 
 
-def ask_ollama(prompt: str, json_mode: bool = False, max_tokens: int = 350) -> tuple[str | None, str | None]:
-    model = os.getenv("OLLAMA_MODEL", "llama3.1")
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_predict": max_tokens,
-            "temperature": 0.2,
-        },
-    }
-    if json_mode:
-        payload["format"] = "json"
-
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json=payload,
-            timeout=240,
-        )
-        response.raise_for_status()
-    except requests.RequestException as error:
-        return None, str(error)
-
-    return response.json().get("response"), None
-
-
 def make_search_query(user_question: str) -> str:
     prompt = f"""
 Convert the user's research question into one Google search query.
@@ -90,7 +78,7 @@ Schema:
 User question:
 {user_question}
 """
-    response, _error = ask_ollama(prompt, json_mode=True, max_tokens=80)
+    response, _error = ask_llm(prompt, json_mode=True, max_tokens=80)
     if not response:
         return user_question
 
@@ -137,7 +125,7 @@ Schema:
 User question:
 {user_question}
 """
-    response, _error = ask_ollama(prompt, json_mode=True, max_tokens=160)
+    response, _error = ask_llm(prompt, json_mode=True, max_tokens=160)
     if not response:
         return {
             "research_mode": "web",
@@ -147,7 +135,7 @@ User question:
             "final_source_count": FINAL_SOURCE_COUNT,
             "max_age_days": MAX_ARTICLE_AGE_DAYS,
             "requires_freshness": "yes",
-            "reason": "Fallback plan because Ollama did not return JSON.",
+            "reason": "Fallback plan because the LLM did not return JSON.",
         }
 
     try:
@@ -323,7 +311,7 @@ Search results:
 """
     source_links = format_source_links(results, final_source_count)
     trace_text = format_research_trace(trace or [])
-    response, error = ask_ollama(prompt, max_tokens=450)
+    response, error = ask_llm(prompt, max_tokens=450)
     if response:
         parts = [response.strip()]
         if trace_text:
@@ -332,7 +320,7 @@ Search results:
         return "\n\n".join(parts)
 
     return (
-        "Ollama did not return the final summary.\n"
+        "The LLM did not return the final summary.\n"
         f"Reason: {error or 'empty response'}\n\n"
         "Here are the sources I found:\n\n"
         f"{source_links}"
@@ -401,10 +389,19 @@ def process_results(
     else:
         selected_results, rejected_results = select_results_without_freshness_filter(results)
 
-    selected_results = rank_results(search_query, selected_results, requires_freshness)
-    extra_results = selected_results[final_source_count:]
-    selected_results = selected_results[:final_source_count]
-    rejected_results = rejected_results + extra_results
+    heuristic_ranked = rank_results(search_query, selected_results, requires_freshness)
+    candidate_count = min(len(heuristic_ranked), final_source_count * 3)
+    candidates = heuristic_ranked[:candidate_count]
+    pre_rejected = heuristic_ranked[candidate_count:]
+
+    llm_ranked = rank_results_with_llm(search_query, candidates, ask_llm)
+    if llm_ranked:
+        selected_results = llm_ranked[:final_source_count]
+        rejected_results = rejected_results + pre_rejected + llm_ranked[final_source_count:]
+    else:
+        selected_results = heuristic_ranked[:final_source_count]
+        rejected_results = rejected_results + heuristic_ranked[final_source_count:]
+
     return selected_results, rejected_results
 
 
@@ -416,8 +413,15 @@ def run_research_pass(
     final_source_count: int,
     requires_freshness: bool,
     max_age_days: int,
+    on_progress: Callable[[dict[str, str]], None] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, object]]:
+    def report(stage: str, message: str) -> None:
+        if on_progress is not None:
+            on_progress({"stage": stage, "message": message})
+
+    report("search", "Searching the web for sources...")
     results = search_web(search_query, search_result_count, search_tools)
+    report("rank", "Filtering and ranking sources by relevance...")
     selected_results, rejected_results = process_results(
         search_query,
         results,
@@ -425,19 +429,23 @@ def run_research_pass(
         max_age_days,
         final_source_count,
     )
+    report("read", "Reading and extracting content from the top sources...")
     selected_results = enrich_with_article_text(selected_results, max_articles=final_source_count)
+    report("evaluate", "Evaluating evidence quality and coverage...")
     sources = format_sources(selected_results, final_source_count)
-    evaluation = evaluate_evidence(user_question, sources, ask_ollama)
+    evaluation = evaluate_evidence(user_question, sources, ask_llm)
     return selected_results, rejected_results, evaluation
 
 
-def main() -> None:
-    user_question = input("Research question: ").strip()
-    if not user_question:
-        print("Please enter a research question.")
-        return
+def run_research(
+    user_question: str,
+    on_progress: Callable[[dict[str, str]], None] | None = None,
+) -> ResearchResult:
+    def report(stage: str, message: str) -> None:
+        if on_progress is not None:
+            on_progress({"stage": stage, "message": message})
 
-    print("Planning research...")
+    report("plan", "Planning the research strategy and choosing sources...")
     plan = make_research_plan(user_question)
     search_query = str(plan["search_query"])
     search_tools = list(plan["search_tools"])
@@ -446,7 +454,6 @@ def main() -> None:
     max_age_days = int(plan["max_age_days"])
     requires_freshness = plan["requires_freshness"] == "yes"
     max_attempts = clamp(MAX_RESEARCH_ATTEMPTS, 1, MAX_ALLOWED_RESEARCH_ATTEMPTS)
-    print("Searching and checking sources...")
 
     all_results = []
     all_rejected = []
@@ -469,14 +476,25 @@ def main() -> None:
                 final_source_count,
                 requires_freshness,
                 max_age_days,
+                on_progress=on_progress,
             )
         except (GoogleNewsError, SearchError, SearxngSearchError, requests.RequestException) as error:
-            print(f"Search failed: {error}")
-            return
+            report("error", "Search failed, stopping.")
+            return ResearchResult(
+                question=user_question,
+                plan=plan,
+                answer=f"Search failed: {error}",
+                evaluation={"enough_information": False, "confidence": "low", "reason": str(error)},
+                trace=trace,
+            )
 
         all_results = deduplicate_results(all_results + pass_results)
-        all_results = rank_results(search_query, all_results, requires_freshness)[:final_source_count]
         all_rejected.extend(rejected_results)
+        merged = rank_results_with_llm(search_query, all_results, ask_llm)
+        if merged:
+            all_results = merged[:final_source_count]
+        else:
+            all_results = rank_results(search_query, all_results, requires_freshness)[:final_source_count]
 
         enough_information = bool(evaluation.get("enough_information"))
         next_query = evaluation.get("recommended_next_query")
@@ -486,19 +504,40 @@ def main() -> None:
             break
 
         search_query = next_query.strip()
-        print("Evidence is weak, refining the search...")
-
-    if not all_results:
-        if requires_freshness:
-            print(f"No articles were published within the last {max_age_days} days.")
-        else:
-            print("No results found.")
-        return
+        report("retry", "Refining the search query for more specific results...")
 
     final_sources = format_sources(all_results, final_source_count)
+    report("evaluate", "Running a final evidence check...")
+    evaluation = evaluate_evidence(user_question, final_sources, ask_llm)
+    report("answer", "Writing your answer with citations...")
+    answer = answer_with_evidence_check(user_question, all_results, final_source_count, evaluation, trace)
+
+    return ResearchResult(
+        question=user_question,
+        plan=plan,
+        answer=answer,
+        evaluation=evaluation,
+        sources=all_results,
+        rejected=all_rejected,
+        trace=trace,
+    )
+
+
+def main() -> None:
+    user_question = input("Research question: ").strip()
+    if not user_question:
+        print("Please enter a research question.")
+        return
+
+    print("Planning research...")
+    result = run_research(user_question)
+
+    if not result.sources:
+        print("No results found.")
+        return
+
     print("Preparing answer...\n")
-    evaluation = evaluate_evidence(user_question, final_sources, ask_ollama)
-    print(answer_with_evidence_check(user_question, all_results, final_source_count, evaluation, []))
+    print(result.answer)
 
 
 if __name__ == "__main__":

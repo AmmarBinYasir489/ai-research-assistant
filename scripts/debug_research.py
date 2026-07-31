@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from main import (  # noqa: E402
-    ask_ollama,
     deduplicate_results,
     format_sources,
     make_research_plan,
@@ -18,9 +17,10 @@ from main import (  # noqa: E402
     select_results_without_freshness_filter,
 )
 from tools.evidence_evaluator import evaluate_evidence  # noqa: E402
-from tools.result_ranker import rank_results  # noqa: E402
 from tools.google_news import GoogleNewsError  # noqa: E402
 from tools.google_search import SearchError  # noqa: E402
+from tools.llm import ask_llm  # noqa: E402
+from tools.result_ranker import rank_results  # noqa: E402
 from tools.searxng_search import SearxngSearchError  # noqa: E402
 
 
@@ -114,7 +114,7 @@ def main() -> None:
 
     print("\n=== Evidence Evaluation ===")
     sources = format_sources(selected, final_source_count)
-    evaluation = evaluate_evidence(question, sources, ask_ollama)
+    evaluation = evaluate_evidence(question, sources, ask_llm)
     print(json.dumps(evaluation, indent=2))
 
 
