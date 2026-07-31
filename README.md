@@ -175,13 +175,4 @@ Research Assistant is a standard FastAPI application and runs on any Python host
 - This application is an information tool, not legal, medical, or financial advice.
 - Research jobs and progress live in memory and reset when the server restarts.
 
-## Documentation still needed
 
-To complete the visual walkthrough without exposing any account or personal data, capture screenshots from the public example queries and add:
-
-- `docs/images/landing.png`
-- `docs/images/progress.png`
-- `docs/images/evidence-check.png`
-- `docs/images/answer-citations.png`
-- `docs/images/sources-grid.png`
-- optionally `docs/images/demo.gif` (about 20 seconds)
