@@ -1,0 +1,17 @@
+[project]
+name = "ai-research-assistant"
+version = "0.1.0"
+description = "A source-grounded command-line research agent."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]

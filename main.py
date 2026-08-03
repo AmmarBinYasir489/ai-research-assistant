@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -50,7 +51,9 @@ def normalize_search_tools(research_mode: str, search_tools: list[str]) -> list[
     return ordered_tools
 
 
-def ask_ollama(prompt: str, json_mode: bool = False, max_tokens: int = 350) -> tuple[str | None, str | None]:
+def ask_ollama(
+    prompt: str, json_mode: bool = False, max_tokens: int = 350
+) -> tuple[str | None, str | None]:
     model = os.getenv("OLLAMA_MODEL", "llama3.1")
     payload = {
         "model": model,
@@ -212,7 +215,9 @@ def format_sources(results: list[dict[str, str]], final_source_count: int) -> st
     lines = []
     for index, result in enumerate(results[:final_source_count], start=1):
         article_text = result.get("article_text")
-        evidence = f"Article excerpt: {article_text}" if article_text else f"Snippet: {result['snippet']}"
+        evidence = (
+            f"Article excerpt: {article_text}" if article_text else f"Snippet: {result['snippet']}"
+        )
         published = result.get("published_at") or result.get("published") or "unknown date"
         lines.append(
             f"[{index}] {result['title']}\n"
@@ -365,7 +370,9 @@ def search_with_tool(tool: str, query: str, max_results: int) -> list[dict[str, 
     raise SearchError(f"Unknown search tool: {tool}")
 
 
-def search_web(query: str, search_result_count: int, search_tools: list[str]) -> list[dict[str, str]]:
+def search_web(
+    query: str, search_result_count: int, search_tools: list[str]
+) -> list[dict[str, str]]:
     results = []
     errors = []
     per_tool_count = max(3, search_result_count)
@@ -373,7 +380,12 @@ def search_web(query: str, search_result_count: int, search_tools: list[str]) ->
     for tool in search_tools:
         try:
             tool_results = search_with_tool(tool, query, per_tool_count)
-        except (GoogleNewsError, SearchError, SearxngSearchError, requests.RequestException) as error:
+        except (
+            GoogleNewsError,
+            SearchError,
+            SearxngSearchError,
+            requests.RequestException,
+        ) as error:
             errors.append(f"{tool}: {error}")
             continue
 
@@ -431,8 +443,30 @@ def run_research_pass(
     return selected_results, rejected_results, evaluation
 
 
-def main() -> None:
-    user_question = input("Research question: ").strip()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run a source-grounded web research pass.",
+    )
+    parser.add_argument("--query", help="Research question. Prompts interactively when omitted.")
+    parser.add_argument(
+        "--provider",
+        choices=["google_news", "searxng", "serpapi"],
+        help="Use one search provider instead of the planned provider set.",
+    )
+    parser.add_argument("--search-results", type=int, help="Maximum results to gather (1-20).")
+    parser.add_argument("--final-sources", type=int, help="Maximum sources in the answer (1-8).")
+    parser.add_argument("--max-age-days", type=int, help="Freshness window in days (1-365).")
+    parser.add_argument("--attempts", type=int, help="Maximum research passes (1-3).")
+    parser.add_argument("--ollama-model", help="Override the Ollama model for this run.")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.ollama_model:
+        os.environ["OLLAMA_MODEL"] = args.ollama_model
+
+    user_question = (args.query or input("Research question: ")).strip()
     if not user_question:
         print("Please enter a research question.")
         return
@@ -441,11 +475,32 @@ def main() -> None:
     plan = make_research_plan(user_question)
     search_query = str(plan["search_query"])
     search_tools = list(plan["search_tools"])
-    search_result_count = int(plan["search_result_count"])
-    final_source_count = int(plan["final_source_count"])
-    max_age_days = int(plan["max_age_days"])
+    search_result_count = clamp(
+        args.search_results or int(plan["search_result_count"]),
+        1,
+        MAX_ALLOWED_SEARCH_RESULTS,
+    )
+    final_source_count = min(
+        clamp(
+            args.final_sources or int(plan["final_source_count"]),
+            1,
+            MAX_ALLOWED_FINAL_SOURCES,
+        ),
+        search_result_count,
+    )
+    max_age_days = clamp(
+        args.max_age_days or int(plan["max_age_days"]),
+        1,
+        MAX_ALLOWED_ARTICLE_AGE_DAYS,
+    )
     requires_freshness = plan["requires_freshness"] == "yes"
-    max_attempts = clamp(MAX_RESEARCH_ATTEMPTS, 1, MAX_ALLOWED_RESEARCH_ATTEMPTS)
+    max_attempts = clamp(
+        args.attempts or MAX_RESEARCH_ATTEMPTS,
+        1,
+        MAX_ALLOWED_RESEARCH_ATTEMPTS,
+    )
+    if args.provider:
+        search_tools = [args.provider]
     print("Searching and checking sources...")
 
     all_results = []
@@ -470,12 +525,19 @@ def main() -> None:
                 requires_freshness,
                 max_age_days,
             )
-        except (GoogleNewsError, SearchError, SearxngSearchError, requests.RequestException) as error:
+        except (
+            GoogleNewsError,
+            SearchError,
+            SearxngSearchError,
+            requests.RequestException,
+        ) as error:
             print(f"Search failed: {error}")
             return
 
         all_results = deduplicate_results(all_results + pass_results)
-        all_results = rank_results(search_query, all_results, requires_freshness)[:final_source_count]
+        all_results = rank_results(search_query, all_results, requires_freshness)[
+            :final_source_count
+        ]
         all_rejected.extend(rejected_results)
 
         enough_information = bool(evaluation.get("enough_information"))
@@ -498,7 +560,9 @@ def main() -> None:
     final_sources = format_sources(all_results, final_source_count)
     print("Preparing answer...\n")
     evaluation = evaluate_evidence(user_question, final_sources, ask_ollama)
-    print(answer_with_evidence_check(user_question, all_results, final_source_count, evaluation, []))
+    print(
+        answer_with_evidence_check(user_question, all_results, final_source_count, evaluation, [])
+    )
 
 
 if __name__ == "__main__":

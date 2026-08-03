@@ -136,6 +136,41 @@ python main.py
 
 Enter a research question when prompted. The final response includes the evidence assessment and the source links that were checked.
 
+### Command-line options
+
+```bash
+python main.py \
+  --query "What changed in AI regulation this month?" \
+  --provider google_news \
+  --search-results 12 \
+  --final-sources 5 \
+  --max-age-days 30 \
+  --attempts 2
+```
+
+Use `python main.py --help` to see all options. Command-line values apply only to the current run and take precedence over the planned defaults.
+
+### Example session
+
+```text
+$ python main.py --query "What changed in AI regulation this month?" --provider google_news
+Planning research...
+Searching and checking sources...
+Preparing answer...
+
+### Key findings
+1. ...
+
+### Evidence Check
+Enough information: yes
+Confidence: medium
+Reason: The selected recent sources cover the requested regulatory changes.
+
+### Sources Checked
+[1] ...
+[2] ...
+```
+
 ## Grounding rules
 
 The system prompt requires the assistant to:
@@ -154,3 +189,12 @@ These controls reduce unsupported claims, but they do not guarantee factual corr
 - Article extraction may fail on paywalls, client-rendered sites, or bot-protected pages.
 - Authority scoring is heuristic and does not replace editorial judgment.
 - A local language model can still misinterpret otherwise valid evidence.
+
+## Development checks
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+ruff check .
+black --check main.py tests
+```
