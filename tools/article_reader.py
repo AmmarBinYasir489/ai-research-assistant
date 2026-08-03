@@ -7,6 +7,11 @@ try:
 except ImportError:
     BeautifulSoup = None
 
+try:
+    import trafilatura
+except ImportError:
+    trafilatura = None
+
 from html import unescape
 from html.parser import HTMLParser
 
@@ -74,15 +79,35 @@ def extract_text_with_fallback_parser(html: str) -> str:
     return parser.text()
 
 
-def extract_text_from_html(html: str) -> str:
+def clean_html_with_soup(html: str) -> str:
     if BeautifulSoup is None:
-        return extract_text_with_fallback_parser(html)
+        return html
 
     soup = BeautifulSoup(html, "html.parser")
-
     for selector in DROP_SELECTORS:
         for tag in soup.select(selector):
             tag.decompose()
+    return str(soup)
+
+
+def extract_text_from_html(html: str) -> str:
+    cleaned_html = clean_html_with_soup(html)
+
+    if trafilatura is not None:
+        extracted = trafilatura.extract(
+            cleaned_html,
+            include_comments=False,
+            include_tables=False,
+            favor_recall=False,
+            include_formatting=False,
+        )
+        if extracted and extracted.strip():
+            return extracted.strip()
+
+    if BeautifulSoup is None:
+        return extract_text_with_fallback_parser(cleaned_html)
+
+    soup = BeautifulSoup(cleaned_html, "html.parser")
 
     main_content = soup.find("article") or soup.find("main") or soup.body or soup
     text_blocks = []

@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,6 +13,8 @@ from tools.article_reader import enrich_with_article_text
 from tools.evidence_evaluator import evaluate_evidence, format_evaluation_summary
 from tools.google_news import GoogleNewsError, google_news_search
 from tools.google_search import SearchError, google_search
+from tools.llm import ask_llm
+from tools.relevance_ranker import rank_results_with_llm
 from tools.result_ranker import rank_results
 from tools.searxng_search import SearxngSearchError, searxng_search
 
@@ -26,6 +30,17 @@ MAX_ALLOWED_SEARCH_RESULTS = 20
 MAX_ALLOWED_FINAL_SOURCES = 8
 MAX_ALLOWED_ARTICLE_AGE_DAYS = 365
 MAX_ALLOWED_RESEARCH_ATTEMPTS = 3
+
+
+@dataclass
+class ResearchResult:
+    question: str
+    plan: dict[str, object] = field(default_factory=dict)
+    answer: str = ""
+    evaluation: dict[str, object] = field(default_factory=dict)
+    sources: list[dict[str, str]] = field(default_factory=list)
+    rejected: list[dict[str, str]] = field(default_factory=list)
+    trace: list[dict[str, str]] = field(default_factory=list)
 
 
 def clamp(value: int, minimum: int, maximum: int) -> int:
@@ -51,35 +66,6 @@ def normalize_search_tools(research_mode: str, search_tools: list[str]) -> list[
     return ordered_tools
 
 
-def ask_ollama(
-    prompt: str, json_mode: bool = False, max_tokens: int = 350
-) -> tuple[str | None, str | None]:
-    model = os.getenv("OLLAMA_MODEL", "llama3.1")
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "num_predict": max_tokens,
-            "temperature": 0.2,
-        },
-    }
-    if json_mode:
-        payload["format"] = "json"
-
-    try:
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json=payload,
-            timeout=240,
-        )
-        response.raise_for_status()
-    except requests.RequestException as error:
-        return None, str(error)
-
-    return response.json().get("response"), None
-
-
 def make_search_query(user_question: str) -> str:
     prompt = f"""
 Convert the user's research question into one Google search query.
@@ -93,7 +79,7 @@ Schema:
 User question:
 {user_question}
 """
-    response, _error = ask_ollama(prompt, json_mode=True, max_tokens=80)
+    response, _error = ask_llm(prompt, json_mode=True, max_tokens=80)
     if not response:
         return user_question
 
@@ -115,32 +101,33 @@ You are planning a research task.
 Choose the best research mode, query, freshness rule, and source count.
 
 Rules:
-- research_mode must be one of: "news", "web", "hybrid".
-- search_tools can include: "google_news", "searxng", "serpapi".
-- For "latest", "today", "this week", or news questions, use a small max_age_days.
-- For patents, named inventors, patent numbers, assignees, historical facts, or old technical records, use research_mode "web" and set requires_freshness to false.
-- Old sources can still be valid evidence when the user asks for a specific patent, document, person, or record.
-- For broad trend questions, inspect more articles.
-- For "latest trends", "current landscape", or questions needing both recency and background, use research_mode "hybrid".
+- research_mode must be one of: "web", "hybrid", "news".
+- search_tools can include: "searxng", "google_news", "serpapi".
+- "web" is the general default and works for most questions, including historical and reference ones.
+- "news" is only for questions explicitly about very recent events or announcements ("today", "this week", "latest news").
+- "hybrid" combines news and web when the question needs both recent developments and background.
+- requires_freshness should be false unless the user is specifically asking about current or recent events.
+- Older sources are valid evidence for historical, reference, and background questions.
+- Even when recent sources are preferred, older sources can still be used if recent coverage is thin.
 - final_source_count must be smaller than or equal to search_result_count.
 - Return JSON only.
 
 Schema:
 {{
   "research_mode": "hybrid",
-  "search_tools": ["google_news", "searxng"],
+  "search_tools": ["searxng", "google_news"],
   "search_query": "...",
   "search_result_count": 15,
   "final_source_count": 5,
   "max_age_days": 30,
-  "requires_freshness": true,
+  "requires_freshness": false,
   "reason": "..."
 }}
 
 User question:
 {user_question}
 """
-    response, _error = ask_ollama(prompt, json_mode=True, max_tokens=160)
+    response, _error = ask_llm(prompt, json_mode=True, max_tokens=160)
     if not response:
         return {
             "research_mode": "web",
@@ -149,8 +136,8 @@ User question:
             "search_result_count": SEARCH_RESULT_COUNT,
             "final_source_count": FINAL_SOURCE_COUNT,
             "max_age_days": MAX_ARTICLE_AGE_DAYS,
-            "requires_freshness": "yes",
-            "reason": "Fallback plan because Ollama did not return JSON.",
+            "requires_freshness": "no",
+            "reason": "Fallback plan because the LLM did not return JSON.",
         }
 
     try:
@@ -167,7 +154,7 @@ User question:
     search_result_count = parsed.get("search_result_count", SEARCH_RESULT_COUNT)
     final_source_count = parsed.get("final_source_count", FINAL_SOURCE_COUNT)
     max_age_days = parsed.get("max_age_days", MAX_ARTICLE_AGE_DAYS)
-    requires_freshness = parsed.get("requires_freshness", True)
+    requires_freshness = parsed.get("requires_freshness", False)
     reason = parsed.get("reason", "Model-created research plan.")
 
     if not isinstance(research_mode, str):
@@ -190,7 +177,7 @@ User question:
     if not isinstance(max_age_days, int):
         max_age_days = MAX_ARTICLE_AGE_DAYS
     if not isinstance(requires_freshness, bool):
-        requires_freshness = research_mode == "news"
+        requires_freshness = False
     if not isinstance(reason, str):
         reason = "Model-created research plan."
 
@@ -272,11 +259,7 @@ def select_latest_results(
 
     for result in results:
         published_date = parse_result_date(result)
-        if not published_date:
-            rejected_results.append(result)
-            continue
-
-        if published_date < cutoff:
+        if published_date and published_date < cutoff:
             rejected_results.append(result)
             continue
 
@@ -328,8 +311,8 @@ Search results:
 """
     source_links = format_source_links(results, final_source_count)
     trace_text = format_research_trace(trace or [])
-    response, error = ask_ollama(prompt, max_tokens=450)
-    if response:
+    response, error = ask_llm(prompt, max_tokens=450)
+    if response and response.strip():
         parts = [response.strip()]
         if trace_text:
             parts.append(trace_text)
@@ -337,7 +320,7 @@ Search results:
         return "\n\n".join(parts)
 
     return (
-        "Ollama did not return the final summary.\n"
+        "The LLM did not return the final summary.\n"
         f"Reason: {error or 'empty response'}\n\n"
         "Here are the sources I found:\n\n"
         f"{source_links}"
@@ -393,6 +376,15 @@ def search_web(
             result["search_tool"] = tool
         results.extend(tool_results)
 
+    if not results and "searxng" not in search_tools:
+        try:
+            fallback_results = search_with_tool("searxng", query, per_tool_count)
+            for result in fallback_results:
+                result["search_tool"] = "searxng"
+            results.extend(fallback_results)
+        except (SearxngSearchError, requests.RequestException) as error:
+            errors.append(f"searxng: {error}")
+
     results = deduplicate_results(results)
     if results:
         return results[:search_result_count]
@@ -409,14 +401,29 @@ def process_results(
     final_source_count: int,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     if requires_freshness:
-        selected_results, rejected_results = select_latest_results(results, max_age_days)
+        recent_results, older_results = select_latest_results(results, max_age_days)
+        if len(recent_results) < min(final_source_count, len(results)):
+            selected_results = recent_results + older_results
+            rejected_results = []
+        else:
+            selected_results = recent_results
+            rejected_results = older_results
     else:
         selected_results, rejected_results = select_results_without_freshness_filter(results)
 
-    selected_results = rank_results(search_query, selected_results, requires_freshness)
-    extra_results = selected_results[final_source_count:]
-    selected_results = selected_results[:final_source_count]
-    rejected_results = rejected_results + extra_results
+    heuristic_ranked = rank_results(search_query, selected_results, requires_freshness)
+    candidate_count = min(len(heuristic_ranked), final_source_count * 3)
+    candidates = heuristic_ranked[:candidate_count]
+    pre_rejected = heuristic_ranked[candidate_count:]
+
+    llm_ranked = rank_results_with_llm(search_query, candidates, ask_llm)
+    if llm_ranked:
+        selected_results = llm_ranked[:final_source_count]
+        rejected_results = rejected_results + pre_rejected + llm_ranked[final_source_count:]
+    else:
+        selected_results = heuristic_ranked[:final_source_count]
+        rejected_results = rejected_results + heuristic_ranked[final_source_count:]
+
     return selected_results, rejected_results
 
 
@@ -428,8 +435,15 @@ def run_research_pass(
     final_source_count: int,
     requires_freshness: bool,
     max_age_days: int,
+    on_progress: Callable[[dict[str, str]], None] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, object]]:
+    def report(stage: str, message: str) -> None:
+        if on_progress is not None:
+            on_progress({"stage": stage, "message": message})
+
+    report("search", "Searching the web for sources...")
     results = search_web(search_query, search_result_count, search_tools)
+    report("rank", "Filtering and ranking sources by relevance...")
     selected_results, rejected_results = process_results(
         search_query,
         results,
@@ -437,71 +451,46 @@ def run_research_pass(
         max_age_days,
         final_source_count,
     )
+    report("read", "Reading and extracting content from the top sources...")
     selected_results = enrich_with_article_text(selected_results, max_articles=final_source_count)
+    report("evaluate", "Evaluating evidence quality and coverage...")
     sources = format_sources(selected_results, final_source_count)
-    evaluation = evaluate_evidence(user_question, sources, ask_ollama)
+    evaluation = evaluate_evidence(user_question, sources, ask_llm)
     return selected_results, rejected_results, evaluation
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run a source-grounded web research pass.",
-    )
-    parser.add_argument("--query", help="Research question. Prompts interactively when omitted.")
-    parser.add_argument(
-        "--provider",
-        choices=["google_news", "searxng", "serpapi"],
-        help="Use one search provider instead of the planned provider set.",
-    )
-    parser.add_argument("--search-results", type=int, help="Maximum results to gather (1-20).")
-    parser.add_argument("--final-sources", type=int, help="Maximum sources in the answer (1-8).")
-    parser.add_argument("--max-age-days", type=int, help="Freshness window in days (1-365).")
-    parser.add_argument("--attempts", type=int, help="Maximum research passes (1-3).")
-    parser.add_argument("--ollama-model", help="Override the Ollama model for this run.")
-    return parser.parse_args(argv)
+def run_research(
+    user_question: str,
+    on_progress: Callable[[dict[str, str]], None] | None = None,
+    *,
+    provider: str | None = None,
+    search_results: int | None = None,
+    final_sources: int | None = None,
+    max_age_days_override: int | None = None,
+    attempts: int | None = None,
+) -> ResearchResult:
+    def report(stage: str, message: str) -> None:
+        if on_progress is not None:
+            on_progress({"stage": stage, "message": message})
 
-
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    if args.ollama_model:
-        os.environ["OLLAMA_MODEL"] = args.ollama_model
-
-    user_question = (args.query or input("Research question: ")).strip()
-    if not user_question:
-        print("Please enter a research question.")
-        return
-
-    print("Planning research...")
+    report("plan", "Planning the research strategy and choosing sources...")
     plan = make_research_plan(user_question)
     search_query = str(plan["search_query"])
-    search_tools = list(plan["search_tools"])
+    search_tools = [provider] if provider else list(plan["search_tools"])
     search_result_count = clamp(
-        args.search_results or int(plan["search_result_count"]),
-        1,
-        MAX_ALLOWED_SEARCH_RESULTS,
+        search_results or int(plan["search_result_count"]), 1, MAX_ALLOWED_SEARCH_RESULTS
     )
     final_source_count = min(
-        clamp(
-            args.final_sources or int(plan["final_source_count"]),
-            1,
-            MAX_ALLOWED_FINAL_SOURCES,
-        ),
+        clamp(final_sources or int(plan["final_source_count"]), 1, MAX_ALLOWED_FINAL_SOURCES),
         search_result_count,
     )
     max_age_days = clamp(
-        args.max_age_days or int(plan["max_age_days"]),
+        max_age_days_override or int(plan["max_age_days"]),
         1,
         MAX_ALLOWED_ARTICLE_AGE_DAYS,
     )
     requires_freshness = plan["requires_freshness"] == "yes"
-    max_attempts = clamp(
-        args.attempts or MAX_RESEARCH_ATTEMPTS,
-        1,
-        MAX_ALLOWED_RESEARCH_ATTEMPTS,
-    )
-    if args.provider:
-        search_tools = [args.provider]
-    print("Searching and checking sources...")
+    max_attempts = clamp(attempts or MAX_RESEARCH_ATTEMPTS, 1, MAX_ALLOWED_RESEARCH_ATTEMPTS)
 
     all_results = []
     all_rejected = []
@@ -524,6 +513,7 @@ def main(argv: list[str] | None = None) -> None:
                 final_source_count,
                 requires_freshness,
                 max_age_days,
+                on_progress=on_progress,
             )
         except (
             GoogleNewsError,
@@ -531,14 +521,24 @@ def main(argv: list[str] | None = None) -> None:
             SearxngSearchError,
             requests.RequestException,
         ) as error:
-            print(f"Search failed: {error}")
-            return
+            report("error", "Search failed, stopping.")
+            return ResearchResult(
+                question=user_question,
+                plan=plan,
+                answer=f"Search failed: {error}",
+                evaluation={"enough_information": False, "confidence": "low", "reason": str(error)},
+                trace=trace,
+            )
 
         all_results = deduplicate_results(all_results + pass_results)
-        all_results = rank_results(search_query, all_results, requires_freshness)[
-            :final_source_count
-        ]
         all_rejected.extend(rejected_results)
+        merged = rank_results_with_llm(search_query, all_results, ask_llm)
+        if merged:
+            all_results = merged[:final_source_count]
+        else:
+            all_results = rank_results(search_query, all_results, requires_freshness)[
+                :final_source_count
+            ]
 
         enough_information = bool(evaluation.get("enough_information"))
         next_query = evaluation.get("recommended_next_query")
@@ -548,21 +548,85 @@ def main(argv: list[str] | None = None) -> None:
             break
 
         search_query = next_query.strip()
-        print("Evidence is weak, refining the search...")
+        report("retry", "Refining the search query for more specific results...")
 
     if not all_results:
-        if requires_freshness:
-            print(f"No articles were published within the last {max_age_days} days.")
-        else:
-            print("No results found.")
-        return
+        return ResearchResult(
+            question=user_question,
+            plan=plan,
+            answer="I could not find any relevant sources to answer this question.",
+            evaluation={
+                "enough_information": False,
+                "confidence": "low",
+                "reason": "No sources were found.",
+                "missing_information": [],
+                "conflicts": [],
+                "recommended_next_query": None,
+            },
+            trace=trace,
+        )
 
     final_sources = format_sources(all_results, final_source_count)
-    print("Preparing answer...\n")
-    evaluation = evaluate_evidence(user_question, final_sources, ask_ollama)
-    print(
-        answer_with_evidence_check(user_question, all_results, final_source_count, evaluation, [])
+    report("evaluate", "Running a final evidence check...")
+    evaluation = evaluate_evidence(user_question, final_sources, ask_llm)
+    report("answer", "Writing your answer with citations...")
+    answer = answer_with_evidence_check(
+        user_question, all_results, final_source_count, evaluation, trace
     )
+
+    return ResearchResult(
+        question=user_question,
+        plan=plan,
+        answer=answer,
+        evaluation=evaluation,
+        sources=all_results,
+        rejected=all_rejected,
+        trace=trace,
+    )
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a source-grounded web research pass.")
+    parser.add_argument("--query", help="Research question; omit to enter it interactively.")
+    parser.add_argument(
+        "--provider", choices=["google_news", "searxng", "serpapi"], help="Use one search provider."
+    )
+    parser.add_argument("--search-results", type=int, help="Maximum results to inspect (1-20).")
+    parser.add_argument("--final-sources", type=int, help="Sources to keep and cite (1-8).")
+    parser.add_argument(
+        "--max-age-days", type=int, help="Preferred article freshness window (1-365 days)."
+    )
+    parser.add_argument("--attempts", type=int, help="Query-refinement attempts (1-3).")
+    parser.add_argument("--ollama-model", help="Override OLLAMA_MODEL for this run.")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.ollama_model:
+        os.environ["OLLAMA_MODEL"] = args.ollama_model
+
+    user_question = (args.query or input("Research question: ")).strip()
+    if not user_question:
+        print("Please enter a research question.")
+        return
+
+    print("Planning research...")
+    result = run_research(
+        user_question,
+        provider=args.provider,
+        search_results=args.search_results,
+        final_sources=args.final_sources,
+        max_age_days_override=args.max_age_days,
+        attempts=args.attempts,
+    )
+
+    if not result.sources:
+        print("No results found.")
+        return
+
+    print("Preparing answer...\n")
+    print(result.answer)
 
 
 if __name__ == "__main__":
